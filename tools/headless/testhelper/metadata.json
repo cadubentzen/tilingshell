@@ -1,0 +1,6 @@
+{
+  "uuid": "testhelper@local",
+  "name": "Headless test helper",
+  "description": "Test-only: enables unsafe mode (org.gnome.Shell.Eval and Screenshot over D-Bus), hides the overview at startup and clears notifications. Never install it in a real session.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"]
+}

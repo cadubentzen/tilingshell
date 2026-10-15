@@ -303,6 +303,8 @@ export class TilingManager {
             TilingShellWindowManager.get(),
             'unmaximized',
             (_, window: Meta.Window) => {
+                // focus mode unmaximizes the window to center it
+                if ((window as ExtendedWindow).inFocusMode) return;
                 if (Settings.ENABLE_AUTO_TILING) this._autoTile(window, false);
             },
         );

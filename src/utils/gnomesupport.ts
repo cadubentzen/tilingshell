@@ -14,14 +14,18 @@ export function widgetOrientation(vertical: boolean) {
     return { vertical };
 }
 
-export function buildBlurEffect(sigma: number): Shell.BlurEffect {
+export function buildBlurEffect(
+    sigma: number,
+    mode: Shell.BlurMode = Shell.BlurMode.BACKGROUND, // by default, blur what is behind the widget
+    brightness: number = 1,
+): Shell.BlurEffect {
     // changes in GNOME 46+
     // The sigma in Shell.BlurEffect should be replaced by radius. Since the sigma value
     // is radius / 2.0, the radius value will be sigma * 2.0.
 
     const effect = new Shell.BlurEffect();
-    effect.set_mode(Shell.BlurMode.BACKGROUND); // blur what is behind the widget
-    effect.set_brightness(1);
+    effect.set_mode(mode);
+    effect.set_brightness(brightness);
     if (effect.set_radius) {
         effect.set_radius(sigma * 2);
     } else {

@@ -281,6 +281,10 @@
 			<default><![CDATA[['']]]></default>
 			<summary>Minimize all the other windows and show only the focused window</summary>
 		</key>
+		<key type="as" name="toggle-focus-mode">
+			<default><![CDATA[['<Super>f']]]></default>
+			<summary>Toggle focus mode: center the focused window with a 2:1 aspect ratio over the blurred desktop background</summary>
+		</key>
         <key type="as" name="cycle-layouts">
             <default><![CDATA[['']]]></default>
             <summary>Cycle through available workspace layouts</summary>

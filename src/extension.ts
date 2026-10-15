@@ -51,6 +51,7 @@ import { LayoutSwitcherPopup } from './components/layoutSwitcher/layoutSwitcher'
 import { unmaximizeWindow } from './utils/gnomesupport';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import { RaiseTogetherManager } from './components/raiseTogether/raiseTogetherManager';
+import FocusModeManager from './components/focusMode/focusModeManager';
 
 const debug = logger('extension');
 
@@ -64,6 +65,7 @@ export default class TilingShellExtension extends Extension {
     private _resizingManager: ResizingManager | null;
     private _windowBorderManager: WindowBorderManager | null;
     private _raiseTogetherManager: RaiseTogetherManager | null;
+    private _focusModeManager: FocusModeManager | null;
 
     constructor(metadata: ExtensionMetadata) {
         super(metadata);
@@ -76,6 +78,7 @@ export default class TilingShellExtension extends Extension {
         this._resizingManager = null;
         this._windowBorderManager = null;
         this._raiseTogetherManager = null;
+        this._focusModeManager = null;
     }
 
     createIndicator() {
@@ -173,6 +176,9 @@ export default class TilingShellExtension extends Extension {
 
         this._raiseTogetherManager = new RaiseTogetherManager();
         this._raiseTogetherManager.enable();
+
+        this._focusModeManager?.destroy();
+        this._focusModeManager = new FocusModeManager();
 
         this.createIndicator();
 
@@ -332,6 +338,13 @@ export default class TilingShellExtension extends Extension {
                         focus_window,
                         global.get_current_time(),
                     );
+                },
+            );
+            this._signals.connect(
+                this._keybindings,
+                'toggle-focus-mode',
+                (kb: KeyBindings, dp: Meta.Display) => {
+                    this._focusModeManager?.toggle(dp.get_focus_window());
                 },
             );
             this._signals.connect(
@@ -766,6 +779,10 @@ export default class TilingShellExtension extends Extension {
         // bring back overridden keybindings
         this._keybindings?.destroy();
         this._keybindings = null;
+
+        // leave focus mode, restoring the focused window
+        this._focusModeManager?.destroy();
+        this._focusModeManager = null;
 
         // destroy indicator
         this._indicator?.destroy();

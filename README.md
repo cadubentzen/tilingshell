@@ -38,7 +38,7 @@ Have issues, you want to suggest a new feature or contribute? Please open a new 
 |:---|:---|:---|:---|
 | [⬇️](#layout-editor) **Layout editor** | [⬇️](#smart-resize) **Smart resize** | [⬇️](#tile-with-keyboard) **Tile with Keyboard** | [⬇️](#edge-tiling) **Edge Tiling** |
 | [⬇️](#tiling-buttons) **Tiling Buttons** | [⬇️](#per-workspace-layout) **Per-workspace layout** | [⬇️](#auto-tiling) **Auto-tiling** | [⬇️](#tiling-context-menu) **Tiling context menu** |
-| [⬇️](#smart-border-radius) **Smart border radius** | [⬇️](#windows-suggestions) **Windows Suggestions** 
+| [⬇️](#smart-border-radius) **Smart border radius** | [⬇️](#windows-suggestions) **Windows Suggestions** | [⬇️](#focus-mode) **Focus mode** |
 
 ## 🎉🎉 Tiling Shell's AWESOME Supporters!
 Thank you to the :star2: **amazing** <a href="https://patreon.com/domferr"><img src="https://img.shields.io/badge/Patreons-F96854?logo=patreon&logoColor=white)" height="14px"/><a/> and **everyone** who donated on <a href="https://ko-fi.com/domferr"><img src="https://img.shields.io/badge/_Ko--fi-794bc4?logo=ko-fi&logoColor=white" height="14px"/><a/>! :medal_sports:Sean, Markus Huggler, Kostja Palović, Mike Empey, Miguel and Jesse Dhillon on Patreon:medal_sports: and Zorin OS, Nick, thy-fi, iatanas0v, Chris, wbezs, DaneshManoharan, Tamas, Ivan Banha and many more on Ko-fi! You are on a mission to **make Linux window management better for everyone**!
@@ -180,6 +180,12 @@ https://github.com/user-attachments/assets/fbf68458-199d-490b-90cf-3e976d5b511b
 _Can I choose to opt in or out?_
 
 Yes. From the extension's preferences you find a section called Windows Suggestions. You can enable and disable windows suggestions for tiling system, snap assistant and screen edges. You can choose which of the three to keep enabled, or all of them, to personalize for your needs and preferences. 
+
+<p align="right"><b>Go to Usage</b> <a href="#usage">⬆️</a></p>
+
+### Focus mode ###
+
+Press <kbd>SUPER</kbd>+<kbd>F</kbd> to focus on a single window: it is centered on its monitor with a **2:1 aspect ratio**, taking the whole height (or the whole width if the screen is narrower than 2:1), while the rest of the monitor shows the **blurred desktop background**. The other windows of the monitor get the same centered size and position behind the blurred background, so you can switch between them (for example with <kbd>ALT</kbd>+<kbd>TAB</kbd>) while still seeing only one at a time. Press <kbd>SUPER</kbd>+<kbd>F</kbd> again to leave focus mode and bring every window back to its original position and size, maximized windows included. Focus mode is also left when switching workspace. The keybinding can be changed from the extension's preferences.
 
 <p align="right"><b>Go to Usage</b> <a href="#usage">⬆️</a></p>
 

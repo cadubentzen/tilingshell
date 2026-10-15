@@ -738,6 +738,15 @@ export default class TilingShellExtensionPreferences extends ExtensionPreference
                 false,
             ],
             [
+                Settings.SETTING_TOGGLE_FOCUS_MODE,
+                _('Toggle focus mode'),
+                _(
+                    'Center the focused window with a 2:1 aspect ratio over the blurred desktop background',
+                ),
+                false,
+                true,
+            ],
+            [
                 Settings.SETTING_CYCLE_LAYOUTS,
                 _('Cycle layouts'),
                 _('Cycle through available workspace layouts'),
