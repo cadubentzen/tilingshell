@@ -20,14 +20,28 @@ const BACKDROP_BRIGHTNESS = 0.85;
 const BACKDROP_FADE_DURATION = 200; // ms
 const RESIZE_TIMEOUT = 1000; // ms to wait for the window to answer a resize
 const ABANDONED_TIMEOUT = 1000; // ms to wait for a window to replace a closed one
+// titles of the picture-in-picture windows of Firefox and Chromium
+const PIP_TITLE_REGEX = /^picture[- ]in[- ]picture$/i;
 
 interface SavedWindowState {
     rect: Mtk.Rectangle;
     maximized: boolean;
+    above: boolean;
 }
 
 function isMaximized(window: Meta.Window): boolean {
     return window.maximizedHorizontally || window.maximizedVertically;
+}
+
+/** Picture-in-picture video windows, e.g. from Firefox or Chromium. */
+function isPictureInPicture(window: Meta.Window): boolean {
+    if (window.get_window_type() !== Meta.WindowType.NORMAL) return false;
+
+    const tag = window.get_tag?.() ?? '';
+    return (
+        PIP_TITLE_REGEX.test(window.get_title() ?? '') ||
+        /picture-in-picture|\bpip\b/i.test(tag)
+    );
 }
 
 /**
@@ -128,7 +142,59 @@ function computeTargetRect(monitorIndex: number): Mtk.Rectangle {
     });
 }
 
+/**
+ * The blurred area on the left of the focused window, where picture-in-picture
+ * windows go, or null if there is no room for them.
+ */
+function computePipArea(monitorIndex: number): Mtk.Rectangle | null {
+    const workArea = Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
+    const outerGaps = Settings.get_outer_gaps();
+    const innerGaps = Settings.get_inner_gaps();
+    const target = computeTargetRect(monitorIndex);
+    const x = workArea.x + outerGaps.left;
+    const width = target.x - innerGaps.right - x;
+    if (width <= 0) return null;
+
+    return buildRectangle({ x, y: target.y, width, height: target.height });
+}
+
+/**
+ * Stack picture-in-picture windows vertically in the given area, keeping their
+ * aspect ratio (width / height). They take the whole width of the area, or
+ * are scaled down to fit its height, and the stack is at the bottom.
+ */
+function layoutPipWindows(
+    area: Mtk.Rectangle,
+    aspectRatios: number[]
+): Mtk.Rectangle[] {
+    const gap = Settings.get_inner_gaps().top;
+    const totalGaps = gap * (aspectRatios.length - 1);
+    const heights = aspectRatios.map(ratio => area.width / ratio);
+    const totalHeight = heights.reduce((sum, h) => sum + h, 0);
+    const scale = Math.min(
+        1,
+        Math.max(0, area.height - totalGaps) / totalHeight
+    );
+
+    let y =
+        area.y + Math.floor(area.height - totalHeight * scale - totalGaps);
+    return heights.map(h => {
+        const height = Math.floor(h * scale);
+        const width = Math.floor(area.width * scale);
+        const rect = buildRectangle({
+            x: area.x + Math.floor((area.width - width) / 2),
+            y,
+            width,
+            height,
+        });
+        y += height + gap;
+        return rect;
+    });
+}
+
 interface FocusModeWindowCallbacks {
+    /** The geometry given to the window in focus mode. */
+    targetRect: () => Mtk.Rectangle;
     onUnmanaging: () => void;
     onMinimized: () => void;
     onLeftWorkspace: () => void;
@@ -137,21 +203,32 @@ interface FocusModeWindowCallbacks {
 /**
  * A window given the focus mode geometry. It remembers the original geometry
  * and maximized state of the window, to restore them when leaving focus mode.
+ * Picture-in-picture windows are also kept above the others (and the
+ * backdrop) until then.
  */
 class FocusModeWindow {
     public readonly window: Meta.Window;
+    public readonly isPip: boolean;
+    private readonly _callbacks: FocusModeWindowCallbacks;
     private readonly _signals: SignalHandling;
     private readonly _savedState: SavedWindowState;
     private _unmaximizeSignalId: number;
     private _awaitingResize: boolean;
     private _resizeTimeoutId: number;
 
-    constructor(window: Meta.Window, callbacks: FocusModeWindowCallbacks) {
+    constructor(
+        window: Meta.Window,
+        isPip: boolean,
+        callbacks: FocusModeWindowCallbacks
+    ) {
         this.window = window;
+        this.isPip = isPip;
+        this._callbacks = callbacks;
         this._signals = new SignalHandling();
         this._savedState = {
             rect: window.get_frame_rect().copy(),
             maximized: isMaximized(window),
+            above: window.is_above(),
         };
         this._unmaximizeSignalId = 0;
         this._awaitingResize = false;
@@ -184,9 +261,17 @@ class FocusModeWindow {
         });
     }
 
+    /** Width / height of the window before focus mode. */
+    public get aspectRatio(): number {
+        const rect = this._savedState.rect;
+        return rect.height > 0 ? rect.width / rect.height : 16 / 9;
+    }
+
     public center() {
         const window = this.window;
         if (window.is_fullscreen()) return;
+
+        if (this.isPip && !window.is_above()) window.make_above();
 
         if (!isMaximized(window)) {
             this.moveToTargetRect();
@@ -212,7 +297,7 @@ class FocusModeWindow {
         const window = this.window;
         if (window.is_fullscreen() || isMaximized(window)) return;
 
-        const target = computeTargetRect(window.get_monitor());
+        const target = this._callbacks.targetRect();
         if (window.get_frame_rect().equal(target)) return;
 
         this._awaitingResize = true;
@@ -236,6 +321,8 @@ class FocusModeWindow {
         const window = this.window;
         const state = this._savedState;
         this.release();
+        if (this.isPip && !state.above && window.is_above())
+            window.unmake_above();
         if (window.is_fullscreen()) return;
 
         if (isMaximized(window)) unmaximizeWindow(window);
@@ -262,7 +349,7 @@ class FocusModeWindow {
         const window = this.window;
         if (window.is_fullscreen() || isMaximized(window)) return;
 
-        const target = computeTargetRect(window.get_monitor());
+        const target = this._callbacks.targetRect();
         const rect = window.get_frame_rect();
         const x = target.x + Math.floor((target.width - rect.width) / 2);
         const y = target.y + Math.floor((target.height - rect.height) / 2);
@@ -306,6 +393,7 @@ class FocusModeWindow {
  * the rest of the monitor shows the blurred desktop background. Every other
  * window of that monitor gets the same geometry behind the backdrop, so that
  * switching between windows (e.g. with Alt+Tab) keeps the focus mode layout.
+ * Picture-in-picture windows are kept above, in the blurred area on the left.
  * Focus mode follows the focus, and leaving it gives every window its
  * original position, size and maximized state back.
  */
@@ -357,7 +445,11 @@ export default class FocusModeManager {
     }
 
     private _enter(window: Meta.Window | null) {
-        const target = this._focusableWindow(window);
+        // if a picture-in-picture window is focused, use the window below it
+        const target =
+            window && isPictureInPicture(window)
+                ? (this._workspaceWindows()[0] ?? null)
+                : this._focusableWindow(window);
         if (!target) return;
 
         debug('enter focus mode');
@@ -370,6 +462,12 @@ export default class FocusModeManager {
         this._signals.connect(global.display, 'restacked', () => {
             if (this._window) this._backdrop?.placeBelow(this._window);
         });
+        this._signals.connect(
+            global.display,
+            'window-created',
+            (_display: Meta.Display, win: Meta.Window) =>
+                this._onWindowCreated(win)
+        );
         this._signals.connect(global.display, 'workareas-changed', () => {
             this._windows.forEach(fmWindow => fmWindow.moveToTargetRect());
         });
@@ -422,6 +520,7 @@ export default class FocusModeManager {
 
         if (
             window.get_window_type() !== Meta.WindowType.NORMAL ||
+            isPictureInPicture(window) ||
             window.skipTaskbar ||
             window.minimized ||
             window.get_wm_class() === 'gjs'
@@ -509,14 +608,81 @@ export default class FocusModeManager {
             this._workspaceWindows()
                 .filter(win => win.get_monitor() === monitorIndex)
                 .forEach(win => this._manageWindow(win));
+            this._pipWindows()
+                .filter(win => win.get_monitor() === monitorIndex)
+                .forEach(win => this._manageWindow(win, true));
         }
         this._backdrop.placeBelow(window);
     }
 
-    private _manageWindow(window: Meta.Window) {
-        if (this._windows.has(window)) return;
+    private _pipWindows(): Meta.Window[] {
+        // picture-in-picture windows may be skipped by the tab list
+        const workspace = global.workspaceManager.get_active_workspace();
+        return global.display
+            .list_all_windows()
+            .filter(
+                win =>
+                    isPictureInPicture(win) &&
+                    !win.minimized &&
+                    win.located_on_workspace(workspace)
+            );
+    }
 
-        const fmWindow: FocusModeWindow = new FocusModeWindow(window, {
+    private _onWindowCreated(window: Meta.Window) {
+        // wait for the window to be shown: its title may not be set yet, and
+        // its initial position is chosen when it is mapped
+        const actor = window.get_compositor_private() as Meta.WindowActor;
+        if (!actor) return;
+
+        const id = actor.connect('first-frame', () => {
+            actor.disconnect(id);
+            if (
+                this.active &&
+                this._backdrop?.monitorIndex === window.get_monitor() &&
+                isPictureInPicture(window) &&
+                !window.minimized &&
+                window.located_on_workspace(
+                    global.workspaceManager.get_active_workspace()
+                )
+            )
+                this._manageWindow(window, true);
+        });
+    }
+
+    private _pipTargetRect(window: Meta.Window): Mtk.Rectangle {
+        const monitorIndex = window.get_monitor();
+        const area = computePipArea(monitorIndex);
+        if (!area) return window.get_frame_rect();
+
+        const pips = [...this._windows.values()].filter(
+            fmWindow =>
+                fmWindow.isPip && fmWindow.window.get_monitor() === monitorIndex
+        );
+        const rects = layoutPipWindows(
+            area,
+            pips.map(fmWindow => fmWindow.aspectRatio)
+        );
+        const index = pips.findIndex(fmWindow => fmWindow.window === window);
+        return rects[index] ?? window.get_frame_rect();
+    }
+
+    /** Move the picture-in-picture windows to their place in the layout. */
+    private _layoutPipWindows() {
+        this._windows.forEach(fmWindow => {
+            if (fmWindow.isPip) fmWindow.moveToTargetRect();
+        });
+    }
+
+    private _manageWindow(window: Meta.Window, isPip: boolean = false) {
+        if (this._windows.has(window)) return;
+        // leave picture-in-picture windows alone if there is no room for them
+        if (isPip && !computePipArea(window.get_monitor())) return;
+
+        const fmWindow: FocusModeWindow = new FocusModeWindow(window, isPip, {
+            targetRect: () =>
+                isPip
+                    ? this._pipTargetRect(window)
+                    : computeTargetRect(window.get_monitor()),
             // the window is going away, there is nothing to restore
             onUnmanaging: () => {
                 fmWindow.release();
@@ -537,10 +703,15 @@ export default class FocusModeManager {
         });
         this._windows.set(window, fmWindow);
         fmWindow.center();
+        // make room for the new picture-in-picture window
+        if (isPip) this._layoutPipWindows();
     }
 
     private _forgetWindow(window: Meta.Window) {
+        const fmWindow = this._windows.get(window);
         this._windows.delete(window);
+        // give the room of the window to the other picture-in-picture windows
+        if (fmWindow?.isPip) this._layoutPipWindows();
         if (window !== this._window) return;
 
         // the next focused window will take its place

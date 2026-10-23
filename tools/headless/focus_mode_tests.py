@@ -7,6 +7,7 @@ shell started by tools/headless/start.sh (any monitor size or count):
 Screenshots of the main steps are saved in tools/headless/shots/.
 Exits with a non-zero status if a check fails.
 """
+import math
 import os
 import sys
 import time
@@ -15,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ctl  # noqa: E402
 
 EDITOR, CALC, CLOCKS = 'org.gnome.TextEditor', 'org.gnome.Calculator', 'org.gnome.clocks'
+PIP_TITLE = 'Picture-in-Picture'
+PIP_WINDOW = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pip_window.js')
 failures = []
 
 
@@ -77,8 +80,43 @@ def all_centered(st, monitor=None):
     if monitor is None:
         monitor = next((w['monitor'] for w in st['stack'] if w.get('focus')), 0)
     wins = [w for w in st['stack']
-            if w['cls'] != 'BACKDROP' and not w['min'] and w['monitor'] == monitor]
+            if w['cls'] != 'BACKDROP' and w.get('title') != PIP_TITLE
+            and not w['min'] and w['monitor'] == monitor]
     return bool(wins) and all(w['r'] == expected_rect(st) for w in wins)
+
+
+def pips(st):
+    """Picture-in-picture windows, in stacking order."""
+    return [w for w in st['stack'] if w.get('title') == PIP_TITLE]
+
+
+def pip_area(st):
+    """The blurred area on the left of the focus mode rect, between the outer
+    gap and the inner gap, or None if there is no room."""
+    x, _, _, _ = st['workArea']
+    target = expected_rect(st)
+    ax = x + st['gaps']
+    aw = target[0] - st['innerGaps'] - ax
+    return [ax, target[1], aw, target[3]] if aw > 0 else None
+
+
+def pip_layout(st, sizes):
+    """Picture-in-picture rects for windows of the given original sizes:
+    stacked in the pip area at its full width (or scaled down to fit its
+    height), keeping their aspect ratio, at the bottom."""
+    ax, ay, aw, ah = pip_area(st)
+    gap = st['innerGaps']
+    total_gaps = gap * (len(sizes) - 1)
+    heights = [aw / (w / h) for w, h in sizes]
+    total = sum(heights)
+    scale = min(1, max(0, ah - total_gaps) / total)
+    y = ay + math.floor(ah - total * scale - total_gaps)
+    rects = []
+    for h in heights:
+        height, width = math.floor(h * scale), math.floor(aw * scale)
+        rects.append([ax + (aw - width) // 2, y, width, height])
+        y += height + gap
+    return rects
 
 
 def all_restored(st, orig):
@@ -100,10 +138,12 @@ def assert_focus_mode(name, st, cls):
           (bd, st['monitor']))
     check(f'{name}: backdrop right below the focused window', i_bd == i_win - 1, st['stack'])
     below = [w['cls'] for w in st['stack'][:max(i_bd, 0)]]
-    # minimized windows keep their stacking position but are not drawn
+    # minimized windows keep their stacking position but are not drawn,
+    # picture-in-picture windows stay above
     check(f'{name}: other windows hidden below the backdrop',
           all(w['cls'] in below or (w['min'] and not w['visible'])
-              for w in st['stack'] if w['cls'] not in (cls, 'BACKDROP')), st['stack'])
+              for w in st['stack'] if w['cls'] not in (cls, 'BACKDROP') and w.get('title') != PIP_TITLE),
+          st['stack'])
 
 
 monitors = ctl.monitors()
@@ -288,6 +328,73 @@ if len(monitors) > 1:
     st = wait(lambda s: not has_backdrop(s) and all_restored(s, orig))
     check('multi-monitor: exit restores', not has_backdrop(st) and all_restored(st, orig), st)
     activate(EDITOR)
+
+# 9b. picture-in-picture windows go in the blurred area on the left, above the backdrop
+ctl.run([PIP_WINDOW, '480', '270'])
+st = wait(lambda s: len(pips(s)) == 1, 20)
+time.sleep(1)
+activate(EDITOR)
+st = ctl.state()
+pip_orig = pips(st)[0]['r']
+if pip_area(st) is None:
+    print('SKIP picture-in-picture: no room on the left of the focused window')
+else:
+    st = enter(EDITOR)
+    st = wait(lambda s: [p['r'] for p in pips(s)] == pip_layout(s, [(480, 270)]))
+    assert_focus_mode('pip', st, EDITOR)
+    pip = pips(st)[0]
+    check('pip: in the blurred area, at its full width', pip['r'] == pip_layout(st, [(480, 270)])[0],
+          f"{pip['r']} != {pip_layout(st, [(480, 270)])}")
+    check('pip: kept above', pip['above'], pip)
+    check('pip: stacked above the focused window', st['stack'].index(pip) > find(st, EDITOR)[0], st['stack'])
+    time.sleep(0.3)
+    ctl.shot('5-pip')
+
+    # clicking the pip window does not move focus mode to it
+    x, y, w, h = pip['r']
+    ctl.click(x + w // 2, y + h // 2)
+    st = wait(lambda s: any(p['focus'] for p in pips(s)))
+    time.sleep(0.5)
+    st = ctl.state()
+    check('pip clicked: pip focused', any(p['focus'] for p in pips(st)), st['focus'])
+    i_bd, _ = find(st, 'BACKDROP')
+    check('pip clicked: backdrop still right below the editor', i_bd == find(st, EDITOR)[0] - 1, st['stack'])
+    check('pip clicked: editor still centered', rect(st, EDITOR) == expected_rect(st), rect(st, EDITOR))
+    check('pip clicked: pip not moved', pips(st)[0]['r'] == pip['r'], pips(st)[0]['r'])
+    activate(EDITOR)
+
+    # a pip window opened in focus mode is stacked with the first one
+    ctl.run([PIP_WINDOW, '400', '300'])
+    sizes = [(480, 270), (400, 300)]
+    st = wait(lambda s: len(pips(s)) == 2
+              and sorted(p['r'] for p in pips(s)) == sorted(pip_layout(s, sizes)), 20)
+    check('second pip: both stacked in the blurred area',
+          sorted(p['r'] for p in pips(st)) == sorted(pip_layout(st, sizes)),
+          f"{[p['r'] for p in pips(st)]} != {pip_layout(st, sizes)}")
+    check('second pip: kept above', all(p['above'] for p in pips(st)), pips(st))
+    check('second pip: editor still centered', rect(st, EDITOR) == expected_rect(st), rect(st, EDITOR))
+    check('second pip: still in focus mode', has_backdrop(st), st['stack'])
+    time.sleep(0.3)
+    ctl.shot('6-two-pips')
+
+    # closing it gives its room back to the first one
+    js('global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === "%s" '
+       '&& Math.abs(w.get_frame_rect().width / w.get_frame_rect().height - 4 / 3) < 0.01)'
+       '.delete(global.get_current_time()); ""' % PIP_TITLE)
+    st = wait(lambda s: len(pips(s)) == 1 and pips(s)[0]['r'] == pip_layout(s, [(480, 270)])[0])
+    check('second pip closed: first pip takes the whole area again',
+          pips(st)[0]['r'] == pip_layout(st, [(480, 270)])[0], pips(st))
+    activate(EDITOR)
+
+    ctl.keys(['<Super>f'])
+    st = wait(lambda s: not has_backdrop(s) and all_restored(s, orig) and pips(s)[0]['r'] == pip_orig)
+    check('pip exit: geometry restored', pips(st)[0]['r'] == pip_orig, f"{pips(st)[0]['r']} != {pip_orig}")
+    check('pip exit: no longer above', not pips(st)[0]['above'], pips(st)[0])
+    check('pip exit: windows restored', all_restored(st, orig), st)
+js('global.get_window_actors().map(a => a.meta_window).filter(w => w.get_title() === "%s")'
+   '.forEach(w => w.delete(global.get_current_time())); ""' % PIP_TITLE)
+wait(lambda s: not pips(s))
+activate(EDITOR)
 
 # 10. closing the focused window moves focus mode to the next one, closing the last one leaves it
 enter(EDITOR)

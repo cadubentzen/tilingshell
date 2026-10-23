@@ -1289,6 +1289,8 @@ export class TilingManager {
                 // autotiling, immediately restore its opacity
                 if (
                     !window.minimized &&
+                    // focus mode already placed it
+                    !(window as ExtendedWindow).inFocusMode &&
                     !window.maximizedHorizontally &&
                     !window.maximizedVertically &&
                     window.get_transient_for() === null &&

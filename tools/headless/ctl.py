@@ -170,7 +170,7 @@ STATE_JS = '''JSON.stringify({
     if (a.meta_window) { const w = a.meta_window, f = w.get_frame_rect();
       return {cls: w.get_wm_class(), title: w.get_title(), r: [f.x, f.y, f.width, f.height],
               monitor: w.get_monitor(), max: w.maximizedHorizontally && w.maximizedVertically,
-              min: w.minimized, visible: a.visible, focus: w.has_focus()}; }
+              min: w.minimized, visible: a.visible, focus: w.has_focus(), above: w.is_above()}; }
     if (a.name === 'TilingShellFocusModeBackdrop')
       return {cls: 'BACKDROP', r: [a.x, a.y, a.width, a.height], opacity: a.opacity};
     return null; }).filter(x => x),
@@ -181,9 +181,10 @@ STATE_JS = '''JSON.stringify({
     const m = Main.layoutManager.monitors[fw ? fw.get_monitor() : 0];
     return [m.x, m.y, m.width, m.height]; })(),
   gaps: Main.extensionManager.lookup('%s').stateObj.getSettings().get_uint('outer-gaps'),
+  innerGaps: Main.extensionManager.lookup('%s').stateObj.getSettings().get_uint('inner-gaps'),
   ws: global.workspace_manager.get_active_workspace_index(),
   overview: Main.overview.visible,
-})''' % UUID
+})''' % (UUID, UUID)
 
 
 def state():
